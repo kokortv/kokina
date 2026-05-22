@@ -979,7 +979,7 @@ function renderSheetStatus() {
   const hasSheet = Boolean(config.spreadsheetId);
   const isOnline = navigator.onLine;
   els.syncStatus.textContent = isOnline
-    ? (accessToken && hasSheet ? `Онлайн · Google · ${unsynced} в очереди` : `Онлайн · локально · ${unsynced} в очереди`)
+    ? (accessToken && hasSheet ? `Онлайн · ${config.googleLoginHint || "Google"} · ${unsynced} в очереди` : `Онлайн · локально · ${unsynced} в очереди`)
     : `Офлайн · ${state.entries.length} локально`;
   els.syncStatus.classList.toggle("ready", isOnline && accessToken && hasSheet);
   els.syncStatus.classList.toggle("offline", !isOnline);
@@ -1273,6 +1273,7 @@ function connectGoogle(options = {}) {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
     scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
+    login_hint: config.googleLoginHint || undefined,
     callback: async (response) => {
       authRestoreInProgress = false;
       if (response.error) {
@@ -1284,10 +1285,14 @@ function connectGoogle(options = {}) {
       saveConfig();
       renderSheetStatus();
       if (!silent) showToast("Вход через Google выполнен.");
+      await rememberGoogleUser();
       await connectKokinaSpreadsheet({ silent });
     }
   });
-  tokenClient.requestAccessToken({ prompt: silent || accessToken ? "" : "consent" });
+  tokenClient.requestAccessToken({
+    prompt: silent ? "none" : (accessToken ? "" : "consent"),
+    login_hint: config.googleLoginHint || undefined
+  });
 }
 
 async function connectKokinaSpreadsheet(options = {}) {
@@ -1323,6 +1328,20 @@ async function findKokinaSpreadsheet() {
   });
   const data = await googleFetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
   return (data.files || [])[0] || null;
+}
+
+async function rememberGoogleUser() {
+  try {
+    const about = await googleFetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)");
+    const email = cleanText(about.user?.emailAddress);
+    if (!email) return;
+    config.googleLoginHint = email;
+    config.googleDisplayName = cleanText(about.user?.displayName);
+    saveConfig();
+    renderSheetStatus();
+  } catch {
+    // The account hint is a convenience only; sync still works without it.
+  }
 }
 
 async function createSpreadsheet() {
