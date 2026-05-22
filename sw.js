@@ -1,4 +1,4 @@
-const CACHE_NAME = "kokina-v38";
+const CACHE_NAME = "kokina-v39";
 const ASSETS = [
   "./",
   "./index.html",

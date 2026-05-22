@@ -108,9 +108,11 @@ function bindElements() {
     "productInput",
     "productsList",
     "productChips",
+    "priceInsight",
     "priceContext",
     "priceInput",
     "quantityInput",
+    "quickQuantity",
     "currencyInput",
     "unitInput",
     "barcodeInput",
@@ -131,6 +133,10 @@ function bindElements() {
     "historyRows",
     "entriesTable",
     "exportButton",
+    "checklistInput",
+    "addChecklistButton",
+    "seedChecklistButton",
+    "checklistList",
     "storePointForm",
     "storePointNameInput",
     "storePointLocationInput",
@@ -208,6 +214,7 @@ function bindEvents() {
     if (!els.categoryInput.value.trim()) {
       els.categoryInput.value = categorize(els.productInput.value);
     }
+    renderPriceInsight();
   });
   els.productChips.addEventListener("click", (event) => {
     const button = event.target.closest("[data-product]");
@@ -215,11 +222,16 @@ function bindEvents() {
     els.productInput.value = button.dataset.product;
     els.categoryInput.value = categorize(button.dataset.product);
     updateWizardSummary();
+    renderPriceInsight();
     nextStep();
   });
   els.compareSearch.addEventListener("input", renderBestPrices);
   els.historyProduct.addEventListener("change", renderHistory);
   els.exportButton.addEventListener("click", exportCsv);
+  els.addChecklistButton.addEventListener("click", addChecklistItem);
+  els.seedChecklistButton.addEventListener("click", seedChecklistFromHistory);
+  els.checklistList.addEventListener("click", handleChecklistAction);
+  els.quickQuantity.addEventListener("click", handleQuickQuantity);
   els.connectButton.addEventListener("click", connectGoogle);
   els.createSheetButton.addEventListener("click", createSpreadsheet);
   els.syncButton.addEventListener("click", syncWithSheets);
@@ -239,6 +251,7 @@ function bindEvents() {
       els.productInput.value = button.dataset.product;
       els.categoryInput.value = categorize(button.dataset.product);
       updateWizardSummary();
+      renderPriceInsight();
       nextStep();
     });
   });
@@ -319,6 +332,14 @@ function handleAddPrice(event) {
   showToast(wasEditing ? "Товар обновлен." : "Товар добавлен в визит.");
 }
 
+function handleQuickQuantity(event) {
+  const button = event.target.closest("[data-quick-qty]");
+  if (!button) return;
+  els.quantityInput.value = button.dataset.quickQty;
+  els.unitInput.value = button.dataset.quickUnit || els.unitInput.value;
+  updateWizardSummary();
+}
+
 function locateUser() {
   if (!navigator.geolocation) {
     showToast("Геолокация недоступна в этом браузере.");
@@ -358,6 +379,9 @@ function switchView(view) {
   if (view === "history") {
     renderHistory();
   }
+  if (view === "checklist") {
+    renderChecklist();
+  }
 }
 
 function showWorkspace(view) {
@@ -374,10 +398,12 @@ function render() {
   renderHistorySelect();
   renderHistory();
   renderEntriesTable();
+  renderChecklist();
   renderSheetStatus();
   renderVisitBasket();
   renderStorePoints();
   updateWizard();
+  renderPriceInsight();
 }
 
 function renderStoreOptions() {
@@ -416,6 +442,42 @@ function renderProductChips() {
   els.productChips.innerHTML = products.map((product) => (
     `<button type="button" class="chip" data-product="${escapeHtml(product)}">${escapeHtml(shortProductName(product))}</button>`
   )).join("");
+}
+
+function renderPriceInsight() {
+  const product = cleanText(els.productInput.value);
+  if (!product) {
+    els.priceInsight.classList.add("hidden");
+    els.priceInsight.innerHTML = "";
+    return;
+  }
+
+  const normalized = normalizeProduct(product);
+  const history = state.entries
+    .filter((entry) => entry.normalizedProduct === normalized)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const latest = history[0];
+  if (!latest) {
+    els.priceInsight.classList.add("hidden");
+    els.priceInsight.innerHTML = "";
+    return;
+  }
+
+  const currentStoreKey = currentVisit?.storeKey || storeKeyFor({
+    store: cleanText(els.storeInput.value),
+    location: cleanText(els.locationInput.value),
+    latitude: currentPosition?.latitude || "",
+    longitude: currentPosition?.longitude || ""
+  });
+  const inStore = history.find((entry) => (entry.storeKey || storeKeyFor(entry)) === currentStoreKey);
+  const cheapest = history.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+  els.priceInsight.classList.remove("hidden");
+  els.priceInsight.innerHTML = `
+    <strong>Последняя цена: ${formatMoney(latest.price, latest.currency)}</strong>
+    <span>${escapeHtml(latest.store)} · ${formatDate(latest.createdAt)}</span>
+    ${inStore ? `<span>В этом магазине: ${formatMoney(inStore.price, inStore.currency)}</span>` : ""}
+    ${cheapest && cheapest.id !== latest.id ? `<span>Дешевле всего: ${formatMoney(cheapest.price, cheapest.currency)} · ${escapeHtml(cheapest.store)}</span>` : ""}
+  `;
 }
 
 function renderStoreChips() {
@@ -974,12 +1036,96 @@ function renderEntriesTable() {
   });
 }
 
+function renderChecklist() {
+  state.checklist ||= [];
+  els.checklistList.innerHTML = "";
+  if (!state.checklist.length) {
+    els.checklistList.appendChild(emptyState("Добавьте товары, цены которых хотите проверить в магазине."));
+    return;
+  }
+
+  state.checklist.forEach((item) => {
+    const latest = latestEntryForProduct(item.product);
+    const row = document.createElement("div");
+    row.className = "checklist-item";
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(item.product)}</strong>
+        <span>${latest ? `Последняя: ${formatMoney(latest.price, latest.currency)} · ${formatDate(latest.createdAt)}` : "Еще нет истории"}</span>
+      </div>
+      <div class="table-actions">
+        <button class="table-action" type="button" data-check-product="${escapeHtml(item.product)}">Проверить</button>
+        <button class="table-action danger" type="button" data-remove-check="${escapeHtml(item.id)}">Убрать</button>
+      </div>
+    `;
+    els.checklistList.appendChild(row);
+  });
+}
+
+function addChecklistItem() {
+  const product = cleanText(els.checklistInput.value);
+  if (!product) return;
+  state.checklist ||= [];
+  if (!state.checklist.some((item) => normalizeProduct(item.product) === normalizeProduct(product))) {
+    state.checklist.push({ id: crypto.randomUUID(), product });
+    saveState();
+  }
+  els.checklistInput.value = "";
+  renderChecklist();
+}
+
+function seedChecklistFromHistory() {
+  state.checklist ||= [];
+  const existing = new Set(state.checklist.map((item) => normalizeProduct(item.product)));
+  unique(state.entries.map((entry) => entry.product)).slice(0, 12).forEach((product) => {
+    const normalized = normalizeProduct(product);
+    if (!existing.has(normalized)) {
+      state.checklist.push({ id: crypto.randomUUID(), product });
+      existing.add(normalized);
+    }
+  });
+  saveState();
+  renderChecklist();
+}
+
+function handleChecklistAction(event) {
+  const product = event.target.closest("[data-check-product]")?.dataset.checkProduct;
+  const removeId = event.target.closest("[data-remove-check]")?.dataset.removeCheck;
+  if (product) {
+    if (!currentVisit) {
+      showToast("Сначала выберите магазин.");
+      currentStep = 0;
+      updateWizard();
+      return;
+    }
+    els.productInput.value = product;
+    els.categoryInput.value = categorize(product);
+    renderPriceInsight();
+    currentStep = 3;
+    updateWizard();
+    document.querySelector(".quick-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  if (removeId) {
+    state.checklist = (state.checklist || []).filter((item) => item.id !== removeId);
+    saveState();
+    renderChecklist();
+  }
+}
+
+function latestEntryForProduct(product) {
+  const normalized = normalizeProduct(product);
+  return state.entries
+    .filter((entry) => entry.normalizedProduct === normalized)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+}
+
 function renderSheetStatus() {
   const unsynced = state.entries.filter((entry) => !entry.syncedAt).length;
   const hasSheet = Boolean(config.spreadsheetId);
   const isOnline = navigator.onLine;
+  const synced = config.lastSyncedAt ? ` · ${formatTime(config.lastSyncedAt)}` : "";
   els.syncStatus.textContent = isOnline
-    ? (accessToken && hasSheet ? `Онлайн · ${config.googleLoginHint || "Google"} · ${unsynced} в очереди` : `Онлайн · локально · ${unsynced} в очереди`)
+    ? (accessToken && hasSheet ? `Онлайн · ${config.googleLoginHint || "Google"}${synced} · ${unsynced} в очереди` : `Онлайн · локально · ${unsynced} в очереди`)
     : `Офлайн · ${state.entries.length} локально`;
   els.syncStatus.classList.toggle("ready", isOnline && accessToken && hasSheet);
   els.syncStatus.classList.toggle("offline", !isOnline);
@@ -1069,6 +1215,7 @@ function handleSaveEntryEdit(event) {
   saveState();
   closeEntryEditor();
   render();
+  runAutoSync();
   showToast("Запись обновлена и снова попадет в очередь Sheets.");
 }
 
@@ -1413,6 +1560,8 @@ async function syncWithSheets(options = {}) {
     await writeStoreIndex();
 
     if (!pending.length) {
+      config.lastSyncedAt = new Date().toISOString();
+      saveConfig();
       saveState();
       render();
       if (!silent) {
@@ -1424,28 +1573,21 @@ async function syncWithSheets(options = {}) {
     }
 
     const syncedAt = new Date().toISOString();
-    const grouped = groupBy(pending, (entry) => sheetNameFor(entry));
-
-    for (const [sheetName, entries] of grouped.entries()) {
+    for (const entry of pending) {
+      const sheetName = sheetNameFor(entry);
       if (!existingSheets.has(sheetName)) {
         await createStoreSheet(sheetName);
         existingSheets.add(sheetName);
       }
       await writeHeaders(sheetName);
-
-      const values = entries.map((entry) => entryToRow({ ...entry, syncedAt }));
-      await googleFetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A:O"))}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-        {
-          method: "POST",
-          body: JSON.stringify({ values })
-        }
-      );
+      await upsertEntryToSheets({ ...entry, syncedAt }, existingSheets);
     }
 
     pending.forEach((entry) => {
       entry.syncedAt = syncedAt;
     });
+    config.lastSyncedAt = new Date().toISOString();
+    saveConfig();
     saveState();
     render();
     if (!silent) showToast(`Из Sheets: ${importedCount} цен, ${importedStoresCount} магазинов, удалено ${removedCount}. Отправлено: ${pending.length}.`);
@@ -1587,14 +1729,10 @@ async function deleteSheetByTitle(sheetName) {
 }
 
 async function deleteEntryFromSheets(entry) {
-  const sheetName = entry.sheetName || sheetNameFor(entry);
-  const data = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A2:O"))}`
-  );
-  const rowIndex = (data.values || []).findIndex((row) => cleanText(row[13]) === entry.id);
-  if (rowIndex < 0) return;
+  const found = await findEntryRowInSheets(entry);
+  if (!found) return;
 
-  const properties = (await getSheetPropertiesByTitle()).get(sheetName);
+  const properties = (await getSheetPropertiesByTitle()).get(found.sheetName);
   if (!properties) throw new Error("лист не найден");
 
   await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}:batchUpdate`, {
@@ -1606,14 +1744,62 @@ async function deleteEntryFromSheets(entry) {
             range: {
               sheetId: properties.sheetId,
               dimension: "ROWS",
-              startIndex: rowIndex + 1,
-              endIndex: rowIndex + 2
+              startIndex: found.rowIndex,
+              endIndex: found.rowIndex + 1
             }
           }
         }
       ]
     })
   });
+}
+
+async function upsertEntryToSheets(entry, existingSheets) {
+  const targetSheetName = sheetNameFor(entry);
+  const found = await findEntryRowInSheets(entry, existingSheets);
+  if (found && found.sheetName !== targetSheetName) {
+    await deleteEntryFromSheets(entry);
+    await appendEntryToSheet(entry, targetSheetName);
+    return;
+  }
+  if (found) {
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(found.sheetName, `A${found.rowIndex + 1}:O${found.rowIndex + 1}`))}?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ values: [entryToRow(entry)] })
+      }
+    );
+    return;
+  }
+  await appendEntryToSheet(entry, targetSheetName);
+}
+
+async function appendEntryToSheet(entry, sheetName) {
+  await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A:O"))}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    {
+      method: "POST",
+      body: JSON.stringify({ values: [entryToRow(entry)] })
+    }
+  );
+}
+
+async function findEntryRowInSheets(entry, existingSheets = null) {
+  const preferred = entry.sheetName || sheetNameFor(entry);
+  const sheetNames = existingSheets
+    ? [preferred, ...[...existingSheets].filter((sheetName) => sheetName !== preferred && sheetName !== STORES_SHEET_NAME && sheetName !== "README")]
+    : [preferred];
+  for (const sheetName of unique(sheetNames)) {
+    const data = await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A2:O"))}`
+    ).catch(() => null);
+    const rowIndex = (data?.values || []).findIndex((row) => cleanText(row[13]) === entry.id);
+    if (rowIndex >= 0) {
+      return { sheetName, rowIndex: rowIndex + 1 };
+    }
+  }
+  return null;
 }
 
 async function createStoreSheet(sheetName) {
@@ -1681,7 +1867,7 @@ function entryToRow(entry) {
 function rowToEntry(row, sheetName) {
   const product = cleanText(row[1]);
   const store = cleanText(row[7]);
-  const id = cleanText(row[13]);
+  const id = cleanText(row[13]) || stableIdFromRow(row, sheetName);
   if (!product || !store || !id) return null;
 
   const coordinates = cleanText(row[6]);
@@ -1897,6 +2083,15 @@ function shortProductName(value) {
   return text.length > 18 ? `${text.slice(0, 17)}...` : text;
 }
 
+function stableIdFromRow(row, sheetName) {
+  const text = `${sheetName}|${row.slice(0, 13).map(cleanText).join("|")}`;
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+  }
+  return `sheet-${Math.abs(hash)}`;
+}
+
 function cleanText(value) {
   return String(value || "").trim();
 }
@@ -1928,6 +2123,13 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatTime(value) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 function parseSheetNumber(value) {
   const number = Number(String(value || "").replace(",", "."));
   return Number.isFinite(number) ? number : 0;
@@ -1954,8 +2156,10 @@ function csvCell(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
-function emptyState() {
-  return document.getElementById("emptyStateTemplate").content.firstElementChild.cloneNode(true);
+function emptyState(message = "Пока нет данных.") {
+  const node = document.getElementById("emptyStateTemplate").content.firstElementChild.cloneNode(true);
+  node.textContent = message;
+  return node;
 }
 
 function showToast(message) {
@@ -1967,9 +2171,14 @@ function showToast(message) {
 
 function loadState() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || { entries: [], stores: [] };
+    const loaded = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    return {
+      entries: loaded.entries || [],
+      stores: loaded.stores || [],
+      checklist: loaded.checklist || []
+    };
   } catch {
-    return { entries: [], stores: [] };
+    return { entries: [], stores: [], checklist: [] };
   }
 }
 

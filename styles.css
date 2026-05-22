@@ -405,6 +405,25 @@ textarea:focus {
   padding-top: 2px;
 }
 
+.price-insight {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(248, 251, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(248, 251, 255, 0.08);
+  color: rgba(248, 251, 255, 0.78);
+  padding: 11px 12px;
+  font-size: 0.86rem;
+}
+
+.price-insight strong {
+  color: #ffffff;
+}
+
+.price-insight span {
+  line-height: 1.35;
+}
+
 .photo-preview {
   overflow: hidden;
   max-height: 180px;
@@ -451,6 +470,22 @@ textarea:focus {
 .price-context small {
   color: rgba(248, 251, 255, 0.68);
   font-weight: 850;
+}
+
+.quick-quantity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-quantity button {
+  min-height: 36px;
+  border: 1px solid rgba(248, 251, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(248, 251, 255, 0.10);
+  color: #ffffff;
+  padding: 7px 11px;
+  font-weight: 900;
 }
 
 .optional-details {
@@ -637,7 +672,7 @@ textarea:focus {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   border: 1px solid rgba(36, 52, 71, 0.10);
   border-radius: 8px;
@@ -796,6 +831,40 @@ canvas {
   gap: 12px;
   padding: 11px 0;
   border-bottom: 1px solid var(--line);
+}
+
+.checklist-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.checklist-list {
+  display: grid;
+  gap: 10px;
+}
+
+.checklist-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  padding: 12px;
+}
+
+.checklist-item strong,
+.checklist-item span {
+  display: block;
+}
+
+.checklist-item span {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-top: 3px;
 }
 
 .settings-grid {
@@ -1089,6 +1158,8 @@ canvas {
 
   .inline-controls,
   .capture-grid,
+  .checklist-form,
+  .checklist-item,
   .settings-grid,
   .store-point-form,
   .edit-grid,

@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css?v=38">
+    <link rel="stylesheet" href="./styles.css?v=39">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
@@ -86,6 +86,7 @@
                 <button type="button" class="chip" data-product="Хлеб">Хлеб</button>
                 <button type="button" class="chip" data-product="Яйца 10 шт">Яйца</button>
               </div>
+              <div class="price-insight hidden" id="priceInsight"></div>
             </fieldset>
 
             <fieldset class="wizard-step" data-step="3">
@@ -122,6 +123,13 @@
                     <option value="упак">упак</option>
                   </select>
                 </label>
+              </div>
+              <div class="quick-quantity" id="quickQuantity">
+                <button type="button" data-quick-qty="1" data-quick-unit="шт">1 шт</button>
+                <button type="button" data-quick-qty="2" data-quick-unit="шт">2 шт</button>
+                <button type="button" data-quick-qty="0.5" data-quick-unit="кг">500 г</button>
+                <button type="button" data-quick-qty="1" data-quick-unit="кг">1 кг</button>
+                <button type="button" data-quick-qty="1" data-quick-unit="л">1 л</button>
               </div>
             </fieldset>
 
@@ -163,6 +171,7 @@
             <button class="tab-button active" type="button" data-view="compare">Где дешевле</button>
             <button class="tab-button" type="button" data-view="history">История</button>
             <button class="tab-button" type="button" data-view="list">Список</button>
+            <button class="tab-button" type="button" data-view="checklist">Проверить</button>
           </nav>
 
           <section class="view active" id="compareView" aria-labelledby="compare-title">
@@ -202,6 +211,18 @@
                 <tbody id="entriesTable"></tbody>
               </table>
             </div>
+          </section>
+
+          <section class="view" id="checklistView" aria-labelledby="checklist-title">
+            <div class="panel-heading compact">
+              <h2 id="checklist-title">Проверить цены</h2>
+              <button class="secondary-button" id="seedChecklistButton" type="button">Из истории</button>
+            </div>
+            <div class="checklist-form">
+              <input id="checklistInput" list="productsList" placeholder="Товар для проверки">
+              <button class="primary-button" id="addChecklistButton" type="button">Добавить</button>
+            </div>
+            <div class="checklist-list" id="checklistList"></div>
           </section>
 
           <section class="view" id="settingsView" aria-labelledby="settings-title">
@@ -340,6 +361,6 @@
     </template>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=38" defer></script>
+    <script src="./app.js?v=39" defer></script>
   </body>
 </html>
