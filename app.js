@@ -944,12 +944,17 @@ function renderEntriesTable() {
   state.entries.slice(0, 80).forEach((entry) => {
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${formatDate(entry.createdAt)}</td>
-      <td>${escapeHtml(entry.product)}</td>
-      <td>${formatMoney(entry.price, entry.currency)} / ${escapeHtml(entry.unit)}<br><span class="meta">× ${formatQuantity(entry.quantity || 1)} = ${formatMoney(Number(entry.price) * Number(entry.quantity || 1), entry.currency)}</span></td>
-      <td>${escapeHtml(entry.store)}<br><span class="meta">${escapeHtml(entry.coordinates || coordinatesString(entry) || entry.location || "")}</span></td>
-      <td>${escapeHtml(entry.category)}</td>
-      <td><button class="table-action" type="button" data-edit-entry="${escapeHtml(entry.id)}">Изменить</button></td>
+      <td data-label="Дата">${formatDate(entry.createdAt)}</td>
+      <td data-label="Товар">${escapeHtml(entry.product)}</td>
+      <td data-label="Цена">${formatMoney(entry.price, entry.currency)} / ${escapeHtml(entry.unit)}<br><span class="meta">× ${formatQuantity(entry.quantity || 1)} = ${formatMoney(Number(entry.price) * Number(entry.quantity || 1), entry.currency)}</span></td>
+      <td data-label="Магазин">${escapeHtml(entry.store)}<br><span class="meta">${escapeHtml(entry.coordinates || coordinatesString(entry) || entry.location || "")}</span></td>
+      <td data-label="Категория">${escapeHtml(entry.category)}</td>
+      <td data-label="Действия">
+        <div class="table-actions">
+          <button class="table-action" type="button" data-edit-entry="${escapeHtml(entry.id)}">Изменить</button>
+          <button class="table-action danger" type="button" data-delete-entry="${escapeHtml(entry.id)}">Удалить</button>
+        </div>
+      </td>
     `;
     els.entriesTable.appendChild(row);
   });
@@ -972,10 +977,15 @@ function renderSheetStatus() {
   }
 }
 
-function handleEntryTableAction(event) {
+async function handleEntryTableAction(event) {
   const entryId = event.target.closest("[data-edit-entry]")?.dataset.editEntry;
   if (entryId) {
     openEntryEditor(entryId);
+    return;
+  }
+  const deleteId = event.target.closest("[data-delete-entry]")?.dataset.deleteEntry;
+  if (deleteId) {
+    await deleteSavedEntry(deleteId);
   }
 }
 
@@ -1043,12 +1053,29 @@ function handleSaveEntryEdit(event) {
   showToast("Запись обновлена и снова попадет в очередь Sheets.");
 }
 
-function handleDeleteSavedEntry() {
-  const entryId = els.editEntryIdInput.value;
+async function handleDeleteSavedEntry() {
+  await deleteSavedEntry(els.editEntryIdInput.value);
+  closeEntryEditor();
+}
+
+async function deleteSavedEntry(entryId) {
+  if (!entryId) return;
+  const entry = state.entries.find((item) => item.id === entryId);
   state.entries = state.entries.filter((entry) => entry.id !== entryId);
   saveState();
-  closeEntryEditor();
   render();
+
+  if (entry && accessToken && config.spreadsheetId) {
+    try {
+      await deleteEntryFromSheets(entry);
+      showToast("Запись удалена из приложения и Sheets.");
+      return;
+    } catch (error) {
+      showToast(`Локально удалено. Sheets: ${error.message}`);
+      return;
+    }
+  }
+
   showToast("Запись удалена локально.");
 }
 
@@ -1419,6 +1446,41 @@ function mergeRemoteEntries(remoteEntries) {
 async function getSheetTitles() {
   const data = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}?fields=sheets.properties.title`);
   return new Set((data.sheets || []).map((sheet) => sheet.properties.title));
+}
+
+async function getSheetPropertiesByTitle() {
+  const data = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}?fields=sheets.properties(title,sheetId)`);
+  return new Map((data.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties]));
+}
+
+async function deleteEntryFromSheets(entry) {
+  const sheetName = entry.sheetName || sheetNameFor(entry);
+  const data = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A2:O"))}`
+  );
+  const rowIndex = (data.values || []).findIndex((row) => cleanText(row[13]) === entry.id);
+  if (rowIndex < 0) return;
+
+  const properties = (await getSheetPropertiesByTitle()).get(sheetName);
+  if (!properties) throw new Error("лист не найден");
+
+  await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    body: JSON.stringify({
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: properties.sheetId,
+              dimension: "ROWS",
+              startIndex: rowIndex + 1,
+              endIndex: rowIndex + 2
+            }
+          }
+        }
+      ]
+    })
+  });
 }
 
 async function createStoreSheet(sheetName) {

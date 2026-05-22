@@ -27,6 +27,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   background:
     linear-gradient(180deg, rgba(31, 167, 161, 0.08), rgba(31, 167, 161, 0) 340px),
     linear-gradient(135deg, var(--page-2) 0%, var(--page) 100%);
@@ -720,6 +721,7 @@ textarea:focus {
 
 .table-wrap {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 table {
@@ -851,6 +853,17 @@ canvas {
   color: var(--deep);
   padding: 6px 11px;
   font-weight: 900;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.table-action.danger {
+  background: #fff1ed;
+  color: #bd4a33;
 }
 
 .button-row {
@@ -1052,6 +1065,65 @@ canvas {
 
   .tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .table-wrap {
+    overflow: visible;
+  }
+
+  table,
+  thead,
+  tbody,
+  tr,
+  th,
+  td {
+    display: block;
+  }
+
+  table {
+    min-width: 0;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  tr {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    padding: 10px;
+    box-shadow: 0 8px 20px rgba(36, 52, 71, 0.05);
+  }
+
+  td {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 10px;
+    border-bottom: 0;
+    padding: 7px 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 950;
+  }
+
+  td:first-child {
+    padding-top: 0;
+  }
+
+  td:last-child {
+    padding-bottom: 0;
   }
 
   .price-card,
