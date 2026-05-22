@@ -23,6 +23,7 @@ const DEFAULT_SHEET_NAME = "Без координат";
 const STORES_SHEET_NAME = "Магазины";
 const STORE_HEADERS = ["Название", "Адрес/локация", "Широта", "Долгота", "Координаты", "Страна", "Ключ магазина", "Лист"];
 const GOOGLE_CLIENT_ID = "3205621524-fvs740mecsoe79pksh733e577od5n07b.apps.googleusercontent.com";
+const GOOGLE_AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const currencyRegions = [
   { country: "Грузия", currency: "GEL", minLat: 41.0, maxLat: 43.8, minLon: 39.8, maxLon: 46.8 },
@@ -63,6 +64,7 @@ let scannerStream = null;
 let scannerActive = false;
 let syncInProgress = false;
 let autoSyncTimer = null;
+let authRestoreInProgress = false;
 
 const wizardCopy = [
   ["Где вы сейчас?", "Выберите или введите магазин. Приложение запомнит его для следующих покупок."],
@@ -81,6 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
   registerServiceWorker();
   startAutoSync();
   render();
+  tryRestoreGoogleSession();
 });
 
 function bindElements() {
@@ -1207,19 +1210,63 @@ function startAutoSync() {
 }
 
 function runAutoSync() {
-  if (!navigator.onLine || !accessToken || !config.spreadsheetId || syncInProgress) return;
+  if (!navigator.onLine || syncInProgress) return;
+  if (!accessToken) {
+    tryRestoreGoogleSession();
+    return;
+  }
+  if (!config.spreadsheetId) {
+    connectKokinaSpreadsheet({ silent: true });
+    return;
+  }
   syncWithSheets({ silent: true });
 }
 
-function connectGoogle() {
+async function tryRestoreGoogleSession() {
+  if (authRestoreInProgress || accessToken || !navigator.onLine || !hasRecentGoogleAuth()) return;
+  authRestoreInProgress = true;
+  try {
+    await waitForGoogleIdentity();
+    connectGoogle({ silent: true });
+  } catch {
+    authRestoreInProgress = false;
+  }
+}
+
+function hasRecentGoogleAuth() {
+  return Date.now() - Number(config.googleAuthorizedAt || 0) < GOOGLE_AUTH_TTL_MS;
+}
+
+function waitForGoogleIdentity(timeout = 6000) {
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (window.google?.accounts?.oauth2) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > timeout) {
+        reject(new Error("Google Identity Services не загрузился."));
+        return;
+      }
+      window.setTimeout(tick, 180);
+    };
+    tick();
+  });
+}
+
+function connectGoogle(options = {}) {
+  const silent = Boolean(options.silent);
   saveConfigFromInputs();
   const clientId = getGoogleClientId();
   if (!clientId) {
-    showToast("Нужно один раз встроить Google OAuth Client ID в приложение.");
+    if (!silent) showToast("Нужно один раз встроить Google OAuth Client ID в приложение.");
+    authRestoreInProgress = false;
     return;
   }
   if (!window.google?.accounts?.oauth2) {
-    showToast("Google Identity Services еще не загрузился.");
+    if (!silent) showToast("Google Identity Services еще не загрузился.");
+    authRestoreInProgress = false;
     return;
   }
 
@@ -1227,38 +1274,42 @@ function connectGoogle() {
     client_id: clientId,
     scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
     callback: async (response) => {
+      authRestoreInProgress = false;
       if (response.error) {
-        showToast(`Google OAuth: ${response.error}`);
+        if (!silent) showToast(`Google OAuth: ${response.error}`);
         return;
       }
       accessToken = response.access_token;
+      config.googleAuthorizedAt = Date.now();
+      saveConfig();
       renderSheetStatus();
-      showToast("Вход через Google выполнен.");
-      await connectKokinaSpreadsheet();
+      if (!silent) showToast("Вход через Google выполнен.");
+      await connectKokinaSpreadsheet({ silent });
     }
   });
-  tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+  tokenClient.requestAccessToken({ prompt: silent || accessToken ? "" : "consent" });
 }
 
-async function connectKokinaSpreadsheet() {
+async function connectKokinaSpreadsheet(options = {}) {
+  const silent = Boolean(options.silent);
   if (config.spreadsheetId) {
-    await syncWithSheets();
+    await syncWithSheets({ silent });
     return;
   }
 
   try {
     const sheet = await findKokinaSpreadsheet();
     if (!sheet) {
-      showToast("Таблица Kokina не найдена. Создайте новую один раз.");
+      if (!silent) showToast("Таблица Kokina не найдена. Создайте новую один раз.");
       return;
     }
     config.spreadsheetId = sheet.id;
     saveConfig();
     renderSheetStatus();
-    showToast(`Найдена таблица: ${sheet.name}.`);
-    await syncWithSheets();
+    if (!silent) showToast(`Найдена таблица: ${sheet.name}.`);
+    await syncWithSheets({ silent });
   } catch (error) {
-    showToast(error.message);
+    if (!silent) showToast(error.message);
   }
 }
 
@@ -1577,6 +1628,11 @@ async function googleFetch(url, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      accessToken = "";
+      renderSheetStatus();
+      tryRestoreGoogleSession();
+    }
     const message = data.error?.message || `Google API error ${response.status}`;
     throw new Error(message);
   }
