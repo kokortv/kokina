@@ -61,6 +61,8 @@ let currentVisit = null;
 let editingVisitItemId = "";
 let scannerStream = null;
 let scannerActive = false;
+let syncInProgress = false;
+let autoSyncTimer = null;
 
 const wizardCopy = [
   ["Где вы сейчас?", "Выберите или введите магазин. Приложение запомнит его для следующих покупок."],
@@ -77,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initDefaults();
   bindEvents();
   registerServiceWorker();
+  startAutoSync();
   render();
 });
 
@@ -219,6 +222,14 @@ function bindEvents() {
   els.syncButton.addEventListener("click", syncWithSheets);
   els.clientIdInput.addEventListener("change", saveConfigFromInputs);
   els.sheetIdInput.addEventListener("change", saveConfigFromInputs);
+  window.addEventListener("online", () => {
+    renderSheetStatus();
+    runAutoSync();
+  });
+  window.addEventListener("offline", renderSheetStatus);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") runAutoSync();
+  });
 
   document.querySelectorAll("[data-product]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -963,11 +974,16 @@ function renderEntriesTable() {
 function renderSheetStatus() {
   const unsynced = state.entries.filter((entry) => !entry.syncedAt).length;
   const hasSheet = Boolean(config.spreadsheetId);
-  els.syncStatus.textContent = accessToken && hasSheet
-    ? `Google Sheets · ${unsynced} в очереди`
-    : `${state.entries.length} локально · ${unsynced} в очереди`;
-  els.syncStatus.classList.toggle("ready", accessToken && hasSheet);
+  const isOnline = navigator.onLine;
+  els.syncStatus.textContent = isOnline
+    ? (accessToken && hasSheet ? `Онлайн · Google · ${unsynced} в очереди` : `Онлайн · локально · ${unsynced} в очереди`)
+    : `Офлайн · ${state.entries.length} локально`;
+  els.syncStatus.classList.toggle("ready", isOnline && accessToken && hasSheet);
+  els.syncStatus.classList.toggle("offline", !isOnline);
   els.sheetIdInput.value = config.spreadsheetId || els.sheetIdInput.value;
+  els.connectButton.textContent = accessToken ? "Google подключен" : "Войти через Google";
+  els.connectButton.disabled = Boolean(accessToken);
+  els.createSheetButton.classList.toggle("hidden", Boolean(config.spreadsheetId));
 
   if (config.spreadsheetId) {
     els.sheetLink.href = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`;
@@ -1184,6 +1200,17 @@ function selectStorePoint(store) {
   showToast("Точка выбрана для нового визита.");
 }
 
+function startAutoSync() {
+  clearInterval(autoSyncTimer);
+  autoSyncTimer = setInterval(runAutoSync, 60000);
+  window.setTimeout(runAutoSync, 1200);
+}
+
+function runAutoSync() {
+  if (!navigator.onLine || !accessToken || !config.spreadsheetId || syncInProgress) return;
+  syncWithSheets({ silent: true });
+}
+
 function connectGoogle() {
   saveConfigFromInputs();
   const clientId = getGoogleClientId();
@@ -1260,7 +1287,7 @@ async function createSpreadsheet() {
       method: "POST",
       body: JSON.stringify({
         properties: { title },
-        sheets: [{ properties: { title: "README" } }]
+        sheets: [{ properties: { title: STORES_SHEET_NAME } }]
       })
     });
     config.spreadsheetId = response.spreadsheetId;
@@ -1284,36 +1311,45 @@ async function writeHeaders(sheetName) {
   );
 }
 
-async function syncWithSheets() {
+async function syncWithSheets(options = {}) {
+  const silent = Boolean(options.silent);
+  if (syncInProgress) return;
   saveConfigFromInputs();
   if (!accessToken) {
-    showToast("Сначала войдите через Google.");
+    if (!silent) showToast("Сначала войдите через Google.");
     return;
   }
   if (!config.spreadsheetId) {
-    showToast("Создайте таблицу или вставьте Spreadsheet ID.");
+    if (!silent) showToast("Создайте таблицу или вставьте Spreadsheet ID.");
     return;
   }
 
+  syncInProgress = true;
   try {
     const existingSheets = await getSheetTitles();
     if (!existingSheets.has(STORES_SHEET_NAME)) {
       await createStoreSheet(STORES_SHEET_NAME);
       existingSheets.add(STORES_SHEET_NAME);
     }
+    if (existingSheets.has("README")) {
+      await deleteSheetByTitle("README");
+      existingSheets.delete("README");
+    }
     const remoteStores = await readStoresFromSheets(existingSheets);
     const importedStoresCount = mergeRemoteStores(remoteStores);
     const remoteEntries = await readEntriesFromSheets(existingSheets);
-    const importedCount = mergeRemoteEntries(remoteEntries);
+    const { importedCount, removedCount } = mergeRemoteEntries(remoteEntries);
     const pending = state.entries.filter((entry) => !entry.syncedAt);
     await writeStoreIndex();
 
     if (!pending.length) {
       saveState();
       render();
-      showToast(importedCount || importedStoresCount
-        ? `Из Sheets: ${importedCount} цен, ${importedStoresCount} магазинов.`
-        : "Sheets и приложение уже совпадают.");
+      if (!silent) {
+        showToast(importedCount || importedStoresCount || removedCount
+          ? `Из Sheets: ${importedCount} цен, ${importedStoresCount} магазинов, удалено ${removedCount}.`
+          : "Sheets и приложение уже совпадают.");
+      }
       return;
     }
 
@@ -1342,9 +1378,12 @@ async function syncWithSheets() {
     });
     saveState();
     render();
-    showToast(`Из Sheets: ${importedCount} цен, ${importedStoresCount} магазинов. Отправлено: ${pending.length}.`);
+    if (!silent) showToast(`Из Sheets: ${importedCount} цен, ${importedStoresCount} магазинов, удалено ${removedCount}. Отправлено: ${pending.length}.`);
   } catch (error) {
-    showToast(error.message);
+    if (!silent) showToast(error.message);
+  } finally {
+    syncInProgress = false;
+    renderSheetStatus();
   }
 }
 
@@ -1421,7 +1460,9 @@ async function writeStoreHeaders() {
 
 function mergeRemoteEntries(remoteEntries) {
   let importedCount = 0;
+  let removedCount = 0;
   const localById = new Map(state.entries.map((entry) => [entry.id, entry]));
+  const remoteIds = new Set(remoteEntries.map((entry) => entry.id));
 
   remoteEntries.forEach((remoteEntry) => {
     const localEntry = localById.get(remoteEntry.id);
@@ -1438,9 +1479,14 @@ function mergeRemoteEntries(remoteEntries) {
   });
 
   state.entries = [...new Map(state.entries.map((entry) => [entry.id, entry])).values()]
+    .filter((entry) => {
+      const keep = !entry.syncedAt || remoteIds.has(entry.id);
+      if (!keep) removedCount += 1;
+      return keep;
+    })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   state.entries.forEach(rememberStore);
-  return importedCount;
+  return { importedCount, removedCount };
 }
 
 async function getSheetTitles() {
@@ -1451,6 +1497,23 @@ async function getSheetTitles() {
 async function getSheetPropertiesByTitle() {
   const data = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}?fields=sheets.properties(title,sheetId)`);
   return new Map((data.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties]));
+}
+
+async function deleteSheetByTitle(sheetName) {
+  const properties = (await getSheetPropertiesByTitle()).get(sheetName);
+  if (!properties) return;
+  await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    body: JSON.stringify({
+      requests: [
+        {
+          deleteSheet: {
+            sheetId: properties.sheetId
+          }
+        }
+      ]
+    })
+  });
 }
 
 async function deleteEntryFromSheets(entry) {
