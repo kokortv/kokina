@@ -1760,6 +1760,7 @@ async function upsertEntryToSheets(entry, existingSheets) {
   if (found && found.sheetName !== targetSheetName) {
     await deleteEntryFromSheets(entry);
     await appendEntryToSheet(entry, targetSheetName);
+    await deleteDuplicateEntryRows(entry, existingSheets);
     return;
   }
   if (found) {
@@ -1770,9 +1771,11 @@ async function upsertEntryToSheets(entry, existingSheets) {
         body: JSON.stringify({ values: [entryToRow(entry)] })
       }
     );
+    await deleteDuplicateEntryRows(entry, existingSheets);
     return;
   }
   await appendEntryToSheet(entry, targetSheetName);
+  await deleteDuplicateEntryRows(entry, existingSheets);
 }
 
 async function appendEntryToSheet(entry, sheetName) {
@@ -1794,12 +1797,60 @@ async function findEntryRowInSheets(entry, existingSheets = null) {
     const data = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A2:O"))}`
     ).catch(() => null);
-    const rowIndex = (data?.values || []).findIndex((row) => cleanText(row[13]) === entry.id);
+    const rowIndex = (data?.values || []).findIndex((row) => {
+      const rowId = cleanText(row[13]) || stableIdFromRow(row, sheetName);
+      return rowId === entry.id;
+    });
     if (rowIndex >= 0) {
       return { sheetName, rowIndex: rowIndex + 1 };
     }
   }
   return null;
+}
+
+async function deleteDuplicateEntryRows(entry, existingSheets = null) {
+  const sheetNames = existingSheets
+    ? [...existingSheets].filter((sheetName) => sheetName !== STORES_SHEET_NAME && sheetName !== "README")
+    : [entry.sheetName || sheetNameFor(entry)];
+  const matches = [];
+  for (const sheetName of sheetNames) {
+    const data = await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetRange(sheetName, "A2:O"))}`
+    ).catch(() => null);
+    (data?.values || []).forEach((row, index) => {
+      const rowId = cleanText(row[13]) || stableIdFromRow(row, sheetName);
+      if (rowId === entry.id) {
+        matches.push({ sheetName, rowIndex: index + 1 });
+      }
+    });
+  }
+  if (matches.length <= 1) return;
+
+  const propertiesByTitle = await getSheetPropertiesByTitle();
+  const deletions = matches
+    .slice(1)
+    .sort((a, b) => b.rowIndex - a.rowIndex)
+    .map((match) => {
+      const properties = propertiesByTitle.get(match.sheetName);
+      if (!properties) return null;
+      return {
+        deleteDimension: {
+          range: {
+            sheetId: properties.sheetId,
+            dimension: "ROWS",
+            startIndex: match.rowIndex,
+            endIndex: match.rowIndex + 1
+          }
+        }
+      };
+    })
+    .filter(Boolean);
+
+  if (!deletions.length) return;
+  await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    body: JSON.stringify({ requests: deletions })
+  });
 }
 
 async function createStoreSheet(sheetName) {
