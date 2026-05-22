@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#243447">
+    <title>Kokina</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css?v=33">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">цены в реальных магазинах</p>
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">🐌</span>
+            <h1>Kokina</h1>
+          </div>
+        </div>
+        <div class="top-actions">
+          <div class="status-pill" id="syncStatus">Офлайн-режим</div>
+          <button class="top-button" id="openDataButton" type="button">Данные</button>
+          <button class="top-button" id="openSettingsButton" type="button">Настройки</button>
+        </div>
+      </header>
+
+      <main class="single-mode" id="mainLayout">
+        <section class="quick-panel" aria-labelledby="add-title">
+          <div class="capture-hero">
+            <div>
+              <p class="step-label" id="stepLabel">Шаг 1 из 5</p>
+              <h2 id="add-title">Где вы сейчас?</h2>
+              <p id="stepHint">Выберите или введите магазин. Приложение запомнит его для следующих покупок.</p>
+            </div>
+          </div>
+          <div class="progress-track" aria-hidden="true"><span id="progressFill"></span></div>
+
+          <form id="priceForm" class="price-form">
+            <fieldset class="wizard-step active" data-step="0">
+              <label class="big-field">
+                Магазин
+                <input id="storeInput" name="store" list="storesList" autocomplete="organization" placeholder="Например, Spar" required>
+                <datalist id="storesList"></datalist>
+              </label>
+              <div class="chip-row" id="storeChips"></div>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-step="1">
+              <label class="big-field">
+                Локация
+                <input id="locationInput" name="location" autocomplete="street-address" placeholder="Район, адрес или координаты">
+              </label>
+              <button class="ghost-button" id="locateButton" type="button">Определить автоматически</button>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-step="2">
+              <div class="capture-grid">
+                <label class="photo-picker">
+                  <input id="pricePhotoInput" type="file" accept="image/*" capture="environment">
+                  <span class="capture-icon" aria-hidden="true">⌁</span>
+                  <span>Сфотографировать ценник</span>
+                  <small>Главный способ: фото, OCR и автозаполнение</small>
+                </label>
+                <button class="scan-tile" id="scanBarcodeButton" type="button">
+                  <span class="capture-icon" aria-hidden="true">▦</span>
+                  <span>Штрихкод</span>
+                  <small>Быстро подставим товар из истории</small>
+                </button>
+              </div>
+              <div class="photo-preview hidden" id="photoPreview"></div>
+              <div class="ocr-box hidden" id="ocrBox"></div>
+
+              <label class="big-field manual-field">
+                Товар
+                <input id="productInput" name="product" list="productsList" autocomplete="off" placeholder="Например, молоко 2.5%" required>
+                <datalist id="productsList"></datalist>
+              </label>
+              <div class="chip-row" id="productChips">
+                <button type="button" class="chip" data-product="Молоко 2.5%">Молоко</button>
+                <button type="button" class="chip" data-product="Хлеб">Хлеб</button>
+                <button type="button" class="chip" data-product="Яйца 10 шт">Яйца</button>
+              </div>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-step="3">
+              <div class="price-context" id="priceContext">
+                <span>Товар</span>
+                <strong>Выберите товар на предыдущем шаге</strong>
+              </div>
+              <label class="price-field">
+                Цена
+                <input id="priceInput" name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="4.99" required>
+              </label>
+              <div class="inline-controls">
+                <label>
+                  Количество
+                  <input id="quantityInput" name="quantity" type="number" min="0.001" step="0.001" inputmode="decimal" value="1" required>
+                </label>
+                <label>
+                  Валюта
+                  <select id="currencyInput" name="currency">
+                  <option value="GEL">GEL</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="RUB">RUB</option>
+                  <option value="AMD">AMD</option>
+                  <option value="TRY">TRY</option>
+                </select>
+                </label>
+                <label>
+                  Единица
+                  <select id="unitInput" name="unit">
+                    <option value="шт">шт</option>
+                    <option value="кг">кг</option>
+                    <option value="л">л</option>
+                    <option value="упак">упак</option>
+                  </select>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="wizard-step" data-step="4">
+              <label class="big-field">
+                Категория
+                <input id="categoryInput" name="category" list="categoriesList" placeholder="Определится автоматически">
+                <datalist id="categoriesList"></datalist>
+              </label>
+
+              <details class="optional-details">
+                <summary>Штрихкод, акция или заметка</summary>
+                <label>
+                  Штрихкод
+                  <input id="barcodeInput" name="barcode" inputmode="numeric" autocomplete="off" placeholder="Не обязательно">
+                </label>
+
+                <label>
+                  Заметка
+                  <textarea id="noteInput" name="note" rows="2" placeholder="Скидка, бренд, объем, акция"></textarea>
+                </label>
+              </details>
+            </fieldset>
+
+            <div class="wizard-summary" id="wizardSummary">Заполните первый шаг.</div>
+            <div class="visit-basket hidden" id="visitBasket"></div>
+
+            <div class="wizard-actions">
+              <button class="secondary-button" id="backStepButton" type="button">Назад</button>
+              <button class="primary-button" id="nextStepButton" type="button">Дальше</button>
+              <button class="primary-button hidden" id="saveButton" type="submit">Добавить товар</button>
+              <button class="secondary-button hidden" id="finishVisitButton" type="button">Сохранить и выйти</button>
+            </div>
+          </form>
+        </section>
+
+        <div class="workspace hidden" id="workspacePanel">
+          <nav class="tabs" aria-label="Разделы">
+            <button class="tab-button active" type="button" data-view="compare">Где дешевле</button>
+            <button class="tab-button" type="button" data-view="history">История</button>
+            <button class="tab-button" type="button" data-view="list">Список</button>
+          </nav>
+
+          <section class="view active" id="compareView" aria-labelledby="compare-title">
+            <div class="panel-heading compact">
+              <h2 id="compare-title">Лучшие цены</h2>
+              <input id="compareSearch" type="search" placeholder="Фильтр товара">
+            </div>
+            <div id="bestPrices" class="price-cards"></div>
+          </section>
+
+          <section class="view" id="historyView" aria-labelledby="history-title">
+            <div class="panel-heading compact">
+              <h2 id="history-title">Динамика</h2>
+              <select id="historyProduct"></select>
+            </div>
+            <canvas id="historyChart" width="720" height="260" aria-label="График изменения цены"></canvas>
+            <div id="historyRows" class="timeline"></div>
+          </section>
+
+          <section class="view" id="listView" aria-labelledby="list-title">
+            <div class="panel-heading compact">
+              <h2 id="list-title">Последние записи</h2>
+              <button class="secondary-button" id="exportButton" type="button">CSV</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Товар</th>
+                    <th>Цена</th>
+                    <th>Магазин</th>
+                    <th>Категория</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="entriesTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="view" id="settingsView" aria-labelledby="settings-title">
+            <div class="panel-heading compact">
+              <h2 id="settings-title">Google Sheets</h2>
+              <a id="sheetLink" class="sheet-link hidden" target="_blank" rel="noreferrer">Открыть таблицу</a>
+            </div>
+
+            <div class="settings-grid">
+              <label id="clientIdField">
+                Google OAuth Client ID
+                <input id="clientIdInput" placeholder="Ваш OAuth Client ID">
+              </label>
+              <label>
+                Spreadsheet ID
+                <input id="sheetIdInput" placeholder="Создастся автоматически">
+              </label>
+            </div>
+
+            <div class="button-row">
+              <button class="primary-button" id="connectButton" type="button">Войти через Google</button>
+              <button class="secondary-button" id="createSheetButton" type="button">Создать таблицу</button>
+              <button class="secondary-button" id="syncButton" type="button">Синхронизировать</button>
+            </div>
+
+            <p class="hint">
+              Нужен OAuth Client ID типа Web application. В Google Cloud включите Google Sheets API и Google Drive API.
+            </p>
+
+            <div class="store-manager">
+              <h3>Точки магазинов</h3>
+              <form id="storePointForm" class="store-point-form">
+                <label>
+                  Магазин
+                  <input id="storePointNameInput" placeholder="Spar">
+                </label>
+                <label>
+                  Локация
+                  <input id="storePointLocationInput" placeholder="Сабуртало, ул. ...">
+                </label>
+                <label>
+                  Широта
+                  <input id="storePointLatInput" type="number" step="0.000001" placeholder="41.725000">
+                </label>
+                <label>
+                  Долгота
+                  <input id="storePointLonInput" type="number" step="0.000001" placeholder="44.744000">
+                </label>
+                <button class="secondary-button" type="submit">Добавить точку</button>
+              </form>
+              <div id="storeMap" class="store-map"></div>
+              <div id="storePointsList" class="store-points-list"></div>
+            </div>
+          </section>
+          </div>
+      </main>
+    </div>
+
+    <div class="modal hidden" id="barcodeScanner" role="dialog" aria-modal="true" aria-labelledby="barcodeScannerTitle">
+      <div class="modal-card scanner-card">
+        <div class="modal-head">
+          <h2 id="barcodeScannerTitle">Сканер штрихкода</h2>
+          <button id="closeScannerButton" type="button" aria-label="Закрыть">×</button>
+        </div>
+        <video id="scannerVideo" playsinline muted></video>
+        <div id="scannerStatus" class="hint">Наведите камеру на штрихкод.</div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="entryEditor" role="dialog" aria-modal="true" aria-labelledby="entryEditorTitle">
+      <form class="modal-card edit-card" id="entryEditorForm">
+        <div class="modal-head">
+          <h2 id="entryEditorTitle">Редактировать запись</h2>
+          <button id="closeEntryEditorButton" type="button" aria-label="Закрыть">×</button>
+        </div>
+        <input id="editEntryIdInput" type="hidden">
+        <div class="edit-grid">
+          <label>
+            Штрихкод
+            <input id="editBarcodeInput">
+          </label>
+          <label>
+            Товар
+            <input id="editProductInput" required>
+          </label>
+          <label>
+            Цена
+            <input id="editPriceInput" type="number" min="0" step="0.01" required>
+          </label>
+          <label>
+            Количество
+            <input id="editQuantityInput" type="number" min="0.001" step="0.001" required>
+          </label>
+          <label>
+            Валюта
+            <input id="editCurrencyInput" required>
+          </label>
+          <label>
+            Единица
+            <input id="editUnitInput" required>
+          </label>
+          <label>
+            Категория
+            <input id="editCategoryInput">
+          </label>
+          <label>
+            Магазин
+            <input id="editStoreInput" required>
+          </label>
+          <label>
+            Локация
+            <input id="editLocationInput">
+          </label>
+          <label>
+            Широта
+            <input id="editLatitudeInput" type="number" step="0.000001">
+          </label>
+          <label>
+            Долгота
+            <input id="editLongitudeInput" type="number" step="0.000001">
+          </label>
+          <label class="edit-wide">
+            Заметка
+            <textarea id="editNoteInput" rows="2"></textarea>
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="primary-button" type="submit">Сохранить правку</button>
+          <button class="secondary-button" id="deleteEntryButton" type="button">Удалить запись</button>
+        </div>
+      </form>
+    </div>
+
+    <template id="emptyStateTemplate">
+      <div class="empty-state">Пока нет записей. Добавьте первую цену в магазине.</div>
+    </template>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js?v=33" defer></script>
+  </body>
+</html>

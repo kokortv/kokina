@@ -1,0 +1,17 @@
+{
+  "name": "Kokina",
+  "short_name": "Kokina",
+  "description": "PWA для учета цен в реальных магазинах с синхронизацией в Google Sheets.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#243447",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
