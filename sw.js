@@ -1,4 +1,4 @@
-const CACHE_NAME = "kokina-v42";
+const CACHE_NAME = "kokina-v43";
 const ASSETS = [
   "./",
   "./index.html",
@@ -24,15 +24,12 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+    fetch(event.request).then((response) => {
+      if (response.ok && new URL(event.request.url).origin === self.location.origin) {
         const copy = response.clone();
-        if (response.ok && new URL(event.request.url).origin === self.location.origin) {
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      });
-    })
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      }
+      return response;
+    }).catch(() => caches.match(event.request))
   );
 });

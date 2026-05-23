@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css?v=42">
+    <link rel="stylesheet" href="./styles.css?v=43">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
@@ -170,8 +170,8 @@
           <nav class="tabs" aria-label="Разделы">
             <button class="tab-button active" type="button" data-view="compare">Где дешевле</button>
             <button class="tab-button" type="button" data-view="history">История</button>
-            <button class="tab-button" type="button" data-view="list">Список</button>
-            <button class="tab-button" type="button" data-view="checklist">Проверить</button>
+            <button class="tab-button" type="button" data-view="list">Записи</button>
+            <button class="tab-button" type="button" data-view="checklist">Покупки</button>
           </nav>
 
           <section class="view active" id="compareView" aria-labelledby="compare-title">
@@ -215,12 +215,17 @@
 
           <section class="view" id="checklistView" aria-labelledby="checklist-title">
             <div class="panel-heading compact">
-              <h2 id="checklist-title">Проверить цены</h2>
-              <button class="secondary-button" id="seedChecklistButton" type="button">Из истории</button>
+              <h2 id="checklist-title">Список покупок</h2>
+              <button class="secondary-button" id="seedChecklistButton" type="button">Повторить покупки</button>
             </div>
             <div class="checklist-form">
               <input id="checklistInput" list="productsList" placeholder="Товар для проверки">
+              <input id="checklistQtyInput" inputmode="decimal" placeholder="Кол-во">
               <button class="primary-button" id="addChecklistButton" type="button">Добавить</button>
+            </div>
+            <div class="checklist-toolbar">
+              <div id="checklistStats" class="checklist-stats"></div>
+              <button class="table-action" id="clearDoneChecklistButton" type="button">Очистить готовое</button>
             </div>
             <div class="checklist-list" id="checklistList"></div>
           </section>
@@ -365,6 +370,6 @@
     </template>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=42" defer></script>
+    <script src="./app.js?v=43" defer></script>
   </body>
 </html>

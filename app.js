@@ -66,6 +66,7 @@ let scannerActive = false;
 let syncInProgress = false;
 let autoSyncTimer = null;
 let authRestoreInProgress = false;
+let activeChecklistItemId = "";
 
 const wizardCopy = [
   ["Где вы сейчас?", "Выберите или введите магазин. Приложение запомнит его для следующих покупок."],
@@ -135,8 +136,11 @@ function bindElements() {
     "entriesTable",
     "exportButton",
     "checklistInput",
+    "checklistQtyInput",
     "addChecklistButton",
     "seedChecklistButton",
+    "clearDoneChecklistButton",
+    "checklistStats",
     "checklistList",
     "storePointForm",
     "storePointNameInput",
@@ -236,6 +240,7 @@ function bindEvents() {
   els.exportButton.addEventListener("click", exportCsv);
   els.addChecklistButton.addEventListener("click", addChecklistItem);
   els.seedChecklistButton.addEventListener("click", seedChecklistFromHistory);
+  els.clearDoneChecklistButton.addEventListener("click", clearDoneChecklistItems);
   els.checklistList.addEventListener("click", handleChecklistAction);
   els.quickQuantity.addEventListener("click", handleQuickQuantity);
   els.connectButton.addEventListener("click", connectGoogle);
@@ -330,7 +335,9 @@ function handleAddPrice(event) {
   } else {
     currentVisit.items.push(item);
   }
+  completeChecklistItem(item);
   editingVisitItemId = "";
+  activeChecklistItemId = "";
   rememberStore(item);
   resetItemFields();
   currentStep = 2;
@@ -1044,24 +1051,33 @@ function renderEntriesTable() {
 }
 
 function renderChecklist() {
-  state.checklist ||= [];
+  state.checklist = normalizeChecklist(state.checklist);
   els.checklistList.innerHTML = "";
+  renderChecklistStats();
   if (!state.checklist.length) {
-    els.checklistList.appendChild(emptyState("Добавьте товары, цены которых хотите проверить в магазине."));
+    els.checklistList.appendChild(emptyState("Добавьте товары дома, а в магазине просто проходите по списку и вносите цены."));
     return;
   }
 
   state.checklist.forEach((item) => {
     const latest = latestEntryForProduct(item.product);
+    const cheapest = cheapestEntryForProduct(item.product);
+    const status = checklistStatus(item);
     const row = document.createElement("div");
-    row.className = "checklist-item";
+    row.className = `checklist-item ${status.className}`;
     row.innerHTML = `
       <div>
-        <strong>${escapeHtml(item.product)}</strong>
+        <div class="checklist-title-row">
+          <strong>${escapeHtml(item.product)}</strong>
+          <span class="checklist-status">${status.label}</span>
+        </div>
+        <span>${escapeHtml(formatPlannedQuantity(item))}</span>
         <span>${latest ? `Последняя: ${formatMoney(latest.price, latest.currency)} · ${formatDate(latest.createdAt)}` : "Еще нет истории"}</span>
+        ${cheapest && (!latest || cheapest.id !== latest.id) ? `<span>Дешевле всего: ${formatMoney(cheapest.price, cheapest.currency)} · ${escapeHtml(cheapest.store)}</span>` : ""}
       </div>
       <div class="table-actions">
-        <button class="table-action" type="button" data-check-product="${escapeHtml(item.product)}">Проверить</button>
+        <button class="table-action" type="button" data-check-item="${escapeHtml(item.id)}">${item.status === "priced" ? "Еще цена" : "Внести цену"}</button>
+        <button class="table-action" type="button" data-missing-check="${escapeHtml(item.id)}">${item.status === "missing" ? "Вернуть" : "Нет в наличии"}</button>
         <button class="table-action danger" type="button" data-remove-check="${escapeHtml(item.id)}">Убрать</button>
       </div>
     `;
@@ -1072,22 +1088,47 @@ function renderChecklist() {
 function addChecklistItem() {
   const product = cleanText(els.checklistInput.value);
   if (!product) return;
-  state.checklist ||= [];
-  if (!state.checklist.some((item) => normalizeProduct(item.product) === normalizeProduct(product))) {
-    state.checklist.push({ id: crypto.randomUUID(), product });
-    saveState();
+  state.checklist = normalizeChecklist(state.checklist);
+  const planned = parsePlannedQuantity(els.checklistQtyInput.value);
+  const existing = state.checklist.find((item) => normalizeProduct(item.product) === normalizeProduct(product));
+  if (existing) {
+    existing.quantity = planned.quantity || existing.quantity || 1;
+    existing.unit = planned.unit || existing.unit || "шт";
+    existing.status = "pending";
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    state.checklist.push({
+      id: crypto.randomUUID(),
+      product,
+      quantity: planned.quantity,
+      unit: planned.unit,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
   }
+  saveState();
   els.checklistInput.value = "";
+  els.checklistQtyInput.value = "";
   renderChecklist();
 }
 
 function seedChecklistFromHistory() {
-  state.checklist ||= [];
+  state.checklist = normalizeChecklist(state.checklist);
   const existing = new Set(state.checklist.map((item) => normalizeProduct(item.product)));
   unique(state.entries.map((entry) => entry.product)).slice(0, 12).forEach((product) => {
     const normalized = normalizeProduct(product);
     if (!existing.has(normalized)) {
-      state.checklist.push({ id: crypto.randomUUID(), product });
+      const latest = latestEntryForProduct(product);
+      state.checklist.push({
+        id: crypto.randomUUID(),
+        product,
+        quantity: latest?.quantity || 1,
+        unit: latest?.unit || "шт",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
       existing.add(normalized);
     }
   });
@@ -1096,21 +1137,31 @@ function seedChecklistFromHistory() {
 }
 
 function handleChecklistAction(event) {
-  const product = event.target.closest("[data-check-product]")?.dataset.checkProduct;
+  const checkId = event.target.closest("[data-check-item]")?.dataset.checkItem;
+  const missingId = event.target.closest("[data-missing-check]")?.dataset.missingCheck;
   const removeId = event.target.closest("[data-remove-check]")?.dataset.removeCheck;
-  if (product) {
+  if (checkId) {
+    const item = (state.checklist || []).find((checkItem) => checkItem.id === checkId);
+    if (!item) return;
     if (!currentVisit) {
-      showToast("Сначала выберите магазин.");
+      showToast("Сначала выберите магазин, потом пройдемся по списку.");
       currentStep = 0;
       updateWizard();
+      document.querySelector(".quick-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    els.productInput.value = product;
-    els.categoryInput.value = categorize(product);
+    activeChecklistItemId = item.id;
+    els.productInput.value = item.product;
+    els.quantityInput.value = item.quantity || 1;
+    els.unitInput.value = item.unit || "шт";
+    els.categoryInput.value = categorize(item.product);
     renderPriceInsight();
     currentStep = 3;
     updateWizard();
     document.querySelector(".quick-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  if (missingId) {
+    toggleChecklistMissing(missingId);
   }
   if (removeId) {
     state.checklist = (state.checklist || []).filter((item) => item.id !== removeId);
@@ -1119,11 +1170,56 @@ function handleChecklistAction(event) {
   }
 }
 
+function renderChecklistStats() {
+  const items = state.checklist || [];
+  const pending = items.filter((item) => item.status === "pending").length;
+  const priced = items.filter((item) => item.status === "priced").length;
+  const missing = items.filter((item) => item.status === "missing").length;
+  els.checklistStats.textContent = items.length
+    ? `${pending} проверить · ${priced} с ценой · ${missing} нет в наличии`
+    : "Список пуст";
+  els.clearDoneChecklistButton.disabled = !priced && !missing;
+}
+
+function completeChecklistItem(entry) {
+  if (!activeChecklistItemId) return;
+  const item = (state.checklist || []).find((checkItem) => checkItem.id === activeChecklistItemId);
+  if (!item) return;
+  item.status = "priced";
+  item.lastEntryId = entry.id;
+  item.quantity = entry.quantity || item.quantity || 1;
+  item.unit = entry.unit || item.unit || "шт";
+  item.updatedAt = new Date().toISOString();
+  saveState();
+}
+
+function toggleChecklistMissing(itemId) {
+  const item = (state.checklist || []).find((checkItem) => checkItem.id === itemId);
+  if (!item) return;
+  item.status = item.status === "missing" ? "pending" : "missing";
+  item.updatedAt = new Date().toISOString();
+  saveState();
+  renderChecklist();
+}
+
+function clearDoneChecklistItems() {
+  state.checklist = (state.checklist || []).filter((item) => item.status === "pending");
+  saveState();
+  renderChecklist();
+}
+
 function latestEntryForProduct(product) {
   const normalized = normalizeProduct(product);
   return state.entries
     .filter((entry) => entry.normalizedProduct === normalized)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+}
+
+function cheapestEntryForProduct(product) {
+  const normalized = normalizeProduct(product);
+  return state.entries
+    .filter((entry) => entry.normalizedProduct === normalized)
+    .sort((a, b) => Number(a.price) - Number(b.price))[0] || null;
 }
 
 function renderSheetStatus() {
@@ -2276,6 +2372,52 @@ function plural(count, one, few, many) {
   if (mod10 === 1 && mod100 !== 11) return one;
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
   return many;
+}
+
+function normalizeChecklist(items = []) {
+  return items.map((item) => {
+    if (typeof item === "string") {
+      return {
+        id: crypto.randomUUID(),
+        product: item,
+        quantity: 1,
+        unit: "шт",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+    return {
+      id: item.id || crypto.randomUUID(),
+      product: cleanText(item.product),
+      quantity: Number(item.quantity) || 1,
+      unit: item.unit || "шт",
+      status: ["pending", "priced", "missing"].includes(item.status) ? item.status : "pending",
+      lastEntryId: item.lastEntryId || "",
+      createdAt: item.createdAt || new Date().toISOString(),
+      updatedAt: item.updatedAt || item.createdAt || new Date().toISOString()
+    };
+  }).filter((item) => item.product);
+}
+
+function parsePlannedQuantity(value) {
+  const text = cleanText(value).replace(",", ".");
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  if (!match) return { quantity: 1, unit: "шт" };
+  return {
+    quantity: Number(match[1]) || 1,
+    unit: cleanText(match[2]) || "шт"
+  };
+}
+
+function formatPlannedQuantity(item) {
+  return `План: ${formatQuantity(item.quantity || 1)} ${item.unit || "шт"}`;
+}
+
+function checklistStatus(item) {
+  if (item.status === "priced") return { label: "цена внесена", className: "is-priced" };
+  if (item.status === "missing") return { label: "нет в наличии", className: "is-missing" };
+  return { label: "надо проверить", className: "is-pending" };
 }
 
 function escapeHtml(value) {
