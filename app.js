@@ -23,6 +23,7 @@ const DEFAULT_SHEET_NAME = "Без координат";
 const STORES_SHEET_NAME = "Магазины";
 const STORE_HEADERS = ["Название", "Адрес/локация", "Широта", "Долгота", "Координаты", "Страна", "Ключ магазина", "Лист"];
 const GOOGLE_CLIENT_ID = "3205621524-fvs740mecsoe79pksh733e577od5n07b.apps.googleusercontent.com";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzQQJ0fMFL0rlKwj0KohuF9uCUIOSL62axRLPTJepBdY9cQKJ5sk1z2MwsMNKYj1NWe6Q/exec";
 const GOOGLE_AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const currencyRegions = [
@@ -185,7 +186,10 @@ function initDefaults() {
     els.clientIdField.classList.add("hidden");
   }
   els.sheetIdInput.value = config.spreadsheetId || "";
-  els.scriptUrlInput.value = config.scriptUrl || "";
+  els.scriptUrlInput.value = getScriptUrl() || "";
+  if (APPS_SCRIPT_URL) {
+    els.scriptUrlInput.closest("label")?.classList.add("hidden");
+  }
   categories.forEach((category) => {
     const option = document.createElement("option");
     option.value = category;
@@ -1124,7 +1128,7 @@ function latestEntryForProduct(product) {
 
 function renderSheetStatus() {
   const unsynced = state.entries.filter((entry) => !entry.syncedAt).length;
-  const hasSheet = Boolean(config.spreadsheetId || config.scriptUrl);
+  const hasSheet = Boolean(config.spreadsheetId || getScriptUrl());
   const isOnline = navigator.onLine;
   const synced = config.lastSyncedAt ? ` · ${formatTime(config.lastSyncedAt)}` : "";
   els.syncStatus.textContent = isOnline
@@ -1133,10 +1137,10 @@ function renderSheetStatus() {
   els.syncStatus.classList.toggle("ready", isOnline && accessToken && hasSheet);
   els.syncStatus.classList.toggle("offline", !isOnline);
   els.sheetIdInput.value = config.spreadsheetId || els.sheetIdInput.value;
-  els.scriptUrlInput.value = config.scriptUrl || els.scriptUrlInput.value;
+  els.scriptUrlInput.value = getScriptUrl() || els.scriptUrlInput.value;
   els.connectButton.textContent = accessToken ? "Google подключен" : "Войти через Google";
   els.connectButton.disabled = Boolean(accessToken);
-  els.createSheetButton.classList.toggle("hidden", Boolean(config.spreadsheetId || config.scriptUrl));
+  els.createSheetButton.classList.toggle("hidden", Boolean(config.spreadsheetId || getScriptUrl()));
 
   if (config.spreadsheetId) {
     els.sheetLink.href = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`;
@@ -1235,7 +1239,7 @@ async function deleteSavedEntry(entryId) {
   saveState();
   render();
 
-  if (entry && accessToken && config.scriptUrl) {
+  if (entry && accessToken && getScriptUrl()) {
     try {
       await backendRequest("deleteEntry", { id: entry.id });
       showToast("Запись удалена через Apps Script.");
@@ -1376,7 +1380,7 @@ function runAutoSync() {
     tryRestoreGoogleSession();
     return;
   }
-  if (!config.spreadsheetId && !config.scriptUrl) {
+  if (!config.spreadsheetId && !getScriptUrl()) {
     connectKokinaSpreadsheet({ silent: true });
     return;
   }
@@ -1458,7 +1462,7 @@ function connectGoogle(options = {}) {
 
 async function connectKokinaSpreadsheet(options = {}) {
   const silent = Boolean(options.silent);
-  if (config.scriptUrl) {
+  if (getScriptUrl()) {
     await syncWithSheets({ silent });
     return;
   }
@@ -1554,7 +1558,7 @@ async function syncWithSheets(options = {}) {
     if (!silent) showToast("Сначала войдите через Google.");
     return;
   }
-  if (config.scriptUrl) {
+  if (getScriptUrl()) {
     await syncWithBackend({ silent });
     return;
   }
@@ -1656,7 +1660,7 @@ async function syncWithBackend(options = {}) {
 }
 
 async function backendRequest(action, payload) {
-  const response = await fetch(config.scriptUrl, {
+  const response = await fetch(getScriptUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "text/plain;charset=utf-8"
@@ -2086,13 +2090,17 @@ function exportCsv() {
 function saveConfigFromInputs() {
   config.clientId = GOOGLE_CLIENT_ID ? "" : els.clientIdInput.value.trim();
   config.spreadsheetId = els.sheetIdInput.value.trim();
-  config.scriptUrl = els.scriptUrlInput.value.trim();
+  config.scriptUrl = APPS_SCRIPT_URL ? "" : els.scriptUrlInput.value.trim();
   saveConfig();
   renderSheetStatus();
 }
 
 function getGoogleClientId() {
   return GOOGLE_CLIENT_ID || config.clientId || "";
+}
+
+function getScriptUrl() {
+  return APPS_SCRIPT_URL || config.scriptUrl || "";
 }
 
 function rememberStore(entry) {
