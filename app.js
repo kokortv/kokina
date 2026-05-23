@@ -168,6 +168,7 @@ function bindElements() {
     "clientIdField",
     "clientIdInput",
     "sheetIdInput",
+    "scriptUrlInput",
     "connectButton",
     "createSheetButton",
     "syncButton",
@@ -184,6 +185,7 @@ function initDefaults() {
     els.clientIdField.classList.add("hidden");
   }
   els.sheetIdInput.value = config.spreadsheetId || "";
+  els.scriptUrlInput.value = config.scriptUrl || "";
   categories.forEach((category) => {
     const option = document.createElement("option");
     option.value = category;
@@ -237,6 +239,7 @@ function bindEvents() {
   els.syncButton.addEventListener("click", syncWithSheets);
   els.clientIdInput.addEventListener("change", saveConfigFromInputs);
   els.sheetIdInput.addEventListener("change", saveConfigFromInputs);
+  els.scriptUrlInput.addEventListener("change", saveConfigFromInputs);
   window.addEventListener("online", () => {
     renderSheetStatus();
     runAutoSync();
@@ -1121,7 +1124,7 @@ function latestEntryForProduct(product) {
 
 function renderSheetStatus() {
   const unsynced = state.entries.filter((entry) => !entry.syncedAt).length;
-  const hasSheet = Boolean(config.spreadsheetId);
+  const hasSheet = Boolean(config.spreadsheetId || config.scriptUrl);
   const isOnline = navigator.onLine;
   const synced = config.lastSyncedAt ? ` · ${formatTime(config.lastSyncedAt)}` : "";
   els.syncStatus.textContent = isOnline
@@ -1130,9 +1133,10 @@ function renderSheetStatus() {
   els.syncStatus.classList.toggle("ready", isOnline && accessToken && hasSheet);
   els.syncStatus.classList.toggle("offline", !isOnline);
   els.sheetIdInput.value = config.spreadsheetId || els.sheetIdInput.value;
+  els.scriptUrlInput.value = config.scriptUrl || els.scriptUrlInput.value;
   els.connectButton.textContent = accessToken ? "Google подключен" : "Войти через Google";
   els.connectButton.disabled = Boolean(accessToken);
-  els.createSheetButton.classList.toggle("hidden", Boolean(config.spreadsheetId));
+  els.createSheetButton.classList.toggle("hidden", Boolean(config.spreadsheetId || config.scriptUrl));
 
   if (config.spreadsheetId) {
     els.sheetLink.href = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`;
@@ -1231,6 +1235,16 @@ async function deleteSavedEntry(entryId) {
   saveState();
   render();
 
+  if (entry && accessToken && config.scriptUrl) {
+    try {
+      await backendRequest("deleteEntry", { id: entry.id });
+      showToast("Запись удалена через Apps Script.");
+      return;
+    } catch (error) {
+      showToast(`Локально удалено. Backend: ${error.message}`);
+      return;
+    }
+  }
   if (entry && accessToken && config.spreadsheetId) {
     try {
       await deleteEntryFromSheets(entry);
@@ -1362,7 +1376,7 @@ function runAutoSync() {
     tryRestoreGoogleSession();
     return;
   }
-  if (!config.spreadsheetId) {
+  if (!config.spreadsheetId && !config.scriptUrl) {
     connectKokinaSpreadsheet({ silent: true });
     return;
   }
@@ -1419,7 +1433,7 @@ function connectGoogle(options = {}) {
 
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
-    scope: "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
+    scope: "openid email profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
     login_hint: config.googleLoginHint || undefined,
     callback: async (response) => {
       authRestoreInProgress = false;
@@ -1444,6 +1458,10 @@ function connectGoogle(options = {}) {
 
 async function connectKokinaSpreadsheet(options = {}) {
   const silent = Boolean(options.silent);
+  if (config.scriptUrl) {
+    await syncWithSheets({ silent });
+    return;
+  }
   if (config.spreadsheetId) {
     await syncWithSheets({ silent });
     return;
@@ -1536,6 +1554,10 @@ async function syncWithSheets(options = {}) {
     if (!silent) showToast("Сначала войдите через Google.");
     return;
   }
+  if (config.scriptUrl) {
+    await syncWithBackend({ silent });
+    return;
+  }
   if (!config.spreadsheetId) {
     if (!silent) showToast("Создайте таблицу или вставьте Spreadsheet ID.");
     return;
@@ -1597,6 +1619,59 @@ async function syncWithSheets(options = {}) {
     syncInProgress = false;
     renderSheetStatus();
   }
+}
+
+async function syncWithBackend(options = {}) {
+  const silent = Boolean(options.silent);
+  syncInProgress = true;
+  try {
+    const remote = await backendRequest("list", {});
+    const importedStoresCount = mergeRemoteStores(remote.stores || []);
+    const { importedCount, removedCount } = mergeRemoteEntries(remote.entries || []);
+    const pending = state.entries.filter((entry) => !entry.syncedAt);
+
+    for (const store of state.stores) {
+      await backendRequest("upsertStore", { store });
+    }
+
+    const syncedAt = new Date().toISOString();
+    for (const entry of pending) {
+      await backendRequest("upsertEntry", { entry: { ...entry, syncedAt } });
+      entry.syncedAt = syncedAt;
+    }
+
+    config.lastSyncedAt = new Date().toISOString();
+    saveConfig();
+    saveState();
+    render();
+    if (!silent) {
+      showToast(`Backend: ${importedCount} цен, ${importedStoresCount} магазинов, удалено ${removedCount}, отправлено ${pending.length}.`);
+    }
+  } catch (error) {
+    if (!silent) showToast(error.message);
+  } finally {
+    syncInProgress = false;
+    renderSheetStatus();
+  }
+}
+
+async function backendRequest(action, payload) {
+  const response = await fetch(config.scriptUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify({
+      action,
+      token: accessToken,
+      payload
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `Apps Script error ${response.status}`);
+  }
+  return data.data || {};
 }
 
 async function readEntriesFromSheets(existingSheets) {
@@ -2011,6 +2086,7 @@ function exportCsv() {
 function saveConfigFromInputs() {
   config.clientId = GOOGLE_CLIENT_ID ? "" : els.clientIdInput.value.trim();
   config.spreadsheetId = els.sheetIdInput.value.trim();
+  config.scriptUrl = els.scriptUrlInput.value.trim();
   saveConfig();
   renderSheetStatus();
 }

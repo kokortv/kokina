@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css?v=40">
+    <link rel="stylesheet" href="./styles.css?v=41">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
@@ -240,6 +240,10 @@
                 Spreadsheet ID
                 <input id="sheetIdInput" placeholder="Создастся автоматически">
               </label>
+              <label>
+                Apps Script Web App URL
+                <input id="scriptUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+              </label>
             </div>
 
             <div class="button-row">
@@ -249,7 +253,7 @@
             </div>
 
             <p class="hint">
-              Нужен OAuth Client ID типа Web application. В Google Cloud включите Google Sheets API и Google Drive API.
+              Для общего режима вставьте Apps Script Web App URL. Без него приложение работает напрямую с личной Google Sheets.
             </p>
 
             <div class="store-manager">
@@ -361,6 +365,6 @@
     </template>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=40" defer></script>
+    <script src="./app.js?v=41" defer></script>
   </body>
 </html>
