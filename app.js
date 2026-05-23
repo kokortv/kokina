@@ -72,7 +72,7 @@ const wizardCopy = [
   ["Где вы сейчас?", "Выберите или введите магазин. Приложение запомнит его для следующих покупок."],
   ["Уточним место", "После этого начнется визит: магазин останется выбранным, пока вы не выйдете."],
   ["Что на ценнике?", "Сначала попробуйте фото или штрихкод. Ручной ввод остается рядом, если ценник сложный."],
-  ["Сколько стоит?", "Проверьте товар и внесите цену. Количество и единица остаются под рукой."],
+  ["Сколько итого?", "Введите сумму с ценника или чека и сколько это кг, л или штук. Цену за единицу посчитаем сами."],
   ["Проверка товара", "Оставьте категорию как есть или поправьте. Штрихкод и заметка спрятаны ниже."]
 ];
 
@@ -285,7 +285,7 @@ function handleAddPrice(event) {
   const quantity = Number(form.get("quantity") || 1);
 
   if (!product || !store || !Number.isFinite(price) || !Number.isFinite(quantity) || quantity <= 0) {
-    showToast("Проверьте товар, цену и количество.");
+    showToast("Проверьте товар, итоговую цену и количество.");
     return;
   }
 
@@ -484,13 +484,13 @@ function renderPriceInsight() {
     longitude: currentPosition?.longitude || ""
   });
   const inStore = history.find((entry) => (entry.storeKey || storeKeyFor(entry)) === currentStoreKey);
-  const cheapest = history.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+  const cheapest = history.slice().sort((a, b) => unitPriceValue(a) - unitPriceValue(b))[0];
   els.priceInsight.classList.remove("hidden");
   els.priceInsight.innerHTML = `
-    <strong>Последняя цена: ${formatMoney(latest.price, latest.currency)}</strong>
+    <strong>Последняя цена: ${formatUnitPrice(latest)}</strong>
     <span>${escapeHtml(latest.store)} · ${formatDate(latest.createdAt)}</span>
-    ${inStore ? `<span>В этом магазине: ${formatMoney(inStore.price, inStore.currency)}</span>` : ""}
-    ${cheapest && cheapest.id !== latest.id ? `<span>Дешевле всего: ${formatMoney(cheapest.price, cheapest.currency)} · ${escapeHtml(cheapest.store)}</span>` : ""}
+    ${inStore ? `<span>В этом магазине: ${formatUnitPrice(inStore)}</span>` : ""}
+    ${cheapest && cheapest.id !== latest.id ? `<span>Дешевле всего: ${formatUnitPrice(cheapest)} · ${escapeHtml(cheapest.store)}</span>` : ""}
   `;
 }
 
@@ -537,7 +537,7 @@ function validateStep(step) {
     [els.storeInput, "Введите магазин."],
     [null, ""],
     [els.productInput, "Введите товар."],
-    [els.priceInput, "Введите цену."],
+    [els.priceInput, "Введите итоговую цену."],
     [null, ""]
   ];
   const [input, message] = checks[step];
@@ -582,7 +582,7 @@ function updateWizardSummary() {
   const bits = [
     currentVisit?.store || cleanText(els.storeInput.value),
     cleanText(els.productInput.value),
-    cleanText(els.priceInput.value) ? `${els.priceInput.value} ${els.currencyInput.value} × ${els.quantityInput.value || 1}` : "",
+    cleanText(els.priceInput.value) ? `итого ${els.priceInput.value} ${els.currencyInput.value} за ${els.quantityInput.value || 1} ${els.unitInput.value}` : "",
     cleanText(els.categoryInput.value)
   ].filter(Boolean);
   els.wizardSummary.textContent = bits.length ? bits.join(" · ") : "Выберите магазин, чтобы начать визит.";
@@ -656,7 +656,7 @@ function finishVisit() {
   render();
   showToast(`Сохранено товаров: ${savedCount}.`);
 
-  if (accessToken && config.spreadsheetId) {
+  if (accessToken && (config.spreadsheetId || getScriptUrl())) {
     syncWithSheets();
   }
 }
@@ -670,7 +670,7 @@ function renderVisitBasket() {
 
   els.visitBasket.classList.remove("hidden");
   const items = currentVisit.items;
-  const total = items.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity || 1)), 0);
+  const total = items.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const currency = items[0]?.currency || els.currencyInput.value;
   els.visitBasket.innerHTML = `
     <div class="basket-mini">
@@ -690,7 +690,7 @@ function renderVisitBasket() {
         ${items.length ? items.map((item) => `
           <div class="basket-item">
             <span>${escapeHtml(item.product)} · ${formatQuantity(item.quantity)} ${escapeHtml(item.unit || "шт")}</span>
-            <strong>${formatMoney(Number(item.price) * Number(item.quantity || 1), item.currency)}</strong>
+            <strong>${formatMoney(item.price, item.currency)}</strong>
             <div class="basket-actions">
               <button type="button" data-edit-item="${escapeHtml(item.id)}">Изменить</button>
               <button type="button" data-delete-item="${escapeHtml(item.id)}">Удалить</button>
@@ -779,6 +779,7 @@ async function handlePricePhoto(event) {
       els.barcodeInput.value = parsed.barcode;
       applyProductHistoryByBarcode(parsed.barcode, "wizard");
     }
+    matchChecklistFromCapture({ product: els.productInput.value || parsed.product, barcode: parsed.barcode });
     els.ocrBox.textContent = text ? `Найдено: ${text}` : "Текст на фото не распознан. Заполните вручную.";
     updateWizardSummary();
   } catch {
@@ -833,6 +834,7 @@ async function scanBarcodeLoop(detector) {
       const barcode = codes[0].rawValue;
       els.barcodeInput.value = barcode;
       applyProductHistoryByBarcode(barcode, "wizard");
+      matchChecklistFromCapture({ product: els.productInput.value, barcode });
       stopBarcodeScanner();
       showToast(`Штрихкод найден: ${barcode}`);
       return;
@@ -873,11 +875,61 @@ function applyProductHistoryByBarcode(barcode, target) {
     if (!els.categoryInput.value.trim()) els.categoryInput.value = latest.category || categorize(latest.product);
     els.unitInput.value = latest.unit || els.unitInput.value;
     els.currencyInput.value = latest.currency || els.currencyInput.value;
+    matchChecklistFromCapture({ product: latest.product, barcode: cleanBarcode });
     updateWizardSummary();
   }
 
   showToast("Товар подставлен из истории.");
   return true;
+}
+
+function matchChecklistFromCapture({ product, barcode }) {
+  if (targetIsEditorActive()) return null;
+  const item = findChecklistMatch(product, barcode);
+  if (!item) return null;
+
+  activeChecklistItemId = item.id;
+  if (item.product && (!els.productInput.value.trim() || normalizeProduct(els.productInput.value) !== normalizeProduct(item.product))) {
+    els.productInput.value = item.product;
+    els.categoryInput.value = categorize(item.product);
+  }
+  els.quantityInput.value = item.quantity || els.quantityInput.value || 1;
+  els.unitInput.value = item.unit || els.unitInput.value || "шт";
+  updateWizardSummary();
+  showToast(`Нашел в списке покупок: ${item.product}.`);
+  return item;
+}
+
+function targetIsEditorActive() {
+  return els.entryEditor && !els.entryEditor.classList.contains("hidden");
+}
+
+function findChecklistMatch(product, barcode) {
+  const items = normalizeChecklist(state.checklist || []).filter((item) => item.status !== "priced");
+  if (!items.length) return null;
+
+  const cleanBarcode = cleanText(barcode);
+  if (cleanBarcode) {
+    const history = state.entries.find((entry) => cleanText(entry.barcode) === cleanBarcode);
+    if (history) {
+      const byHistory = findChecklistMatch(history.product, "");
+      if (byHistory) return byHistory;
+    }
+  }
+
+  const normalized = normalizeProduct(product);
+  if (!normalized) return null;
+  return items.find((item) => normalizeProduct(item.product) === normalized)
+    || items.find((item) => productsLookRelated(item.product, product))
+    || null;
+}
+
+function productsLookRelated(a, b) {
+  const left = normalizeProduct(a).split(" ").filter((part) => part.length > 2);
+  const right = new Set(normalizeProduct(b).split(" ").filter((part) => part.length > 2));
+  if (!left.length || !right.size) return false;
+  const matches = left.filter((part) => right.has(part)).length;
+  return matches >= Math.min(2, left.length);
 }
 
 function renderBestPrices() {
@@ -901,7 +953,7 @@ function renderBestPrices() {
   });
 
   const cards = [...grouped.values()]
-    .map((items) => items.sort((a, b) => a.price - b.price)[0])
+    .map((items) => items.sort((a, b) => unitPriceValue(a) - unitPriceValue(b))[0])
     .sort((a, b) => a.product.localeCompare(b.product, "ru"));
 
   els.bestPrices.innerHTML = "";
@@ -920,8 +972,8 @@ function renderBestPrices() {
         <div class="meta">${escapeHtml(entry.store)} · ${escapeHtml(entry.location || entry.coordinates || "без локации")}</div>
         <span class="badge">${escapeHtml(entry.category || "Другое")}</span>
       </div>
-      <div class="price">${formatMoney(entry.price, entry.currency)} / ${escapeHtml(entry.unit)}</div>
-      <div class="meta">${alternatives} ${plural(alternatives, "магазин", "магазина", "магазинов")} в сравнении</div>
+      <div class="price">${formatUnitPrice(entry)}</div>
+      <div class="meta">ценник: ${formatMoney(entry.price, entry.currency)} за ${formatQuantity(entry.quantity || 1)} ${escapeHtml(entry.unit || "шт")} · ${alternatives} ${plural(alternatives, "магазин", "магазина", "магазинов")} в сравнении</div>
     `;
     els.bestPrices.appendChild(card);
   });
@@ -965,7 +1017,7 @@ function renderHistory() {
         <strong>${formatDate(entry.createdAt)}</strong>
         <div class="meta">${escapeHtml(entry.store)} · ${escapeHtml(entry.location || entry.coordinates || "без локации")}</div>
       </div>
-      <div class="price">${formatMoney(entry.price, entry.currency)}</div>
+      <div class="price">${formatUnitPrice(entry)}</div>
     `;
     els.historyRows.appendChild(item);
   });
@@ -985,7 +1037,7 @@ function drawChart(rows) {
     return;
   }
 
-  const prices = rows.map((row) => row.price);
+  const prices = rows.map((row) => unitPriceValue(row));
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const pad = 34;
@@ -1006,7 +1058,7 @@ function drawChart(rows) {
   ctx.beginPath();
   rows.forEach((row, index) => {
     const x = pad + ((canvas.width - pad * 2) / (rows.length - 1)) * index;
-    const y = canvas.height - pad - ((row.price - min) / spread) * (canvas.height - pad * 2);
+    const y = canvas.height - pad - ((unitPriceValue(row) - min) / spread) * (canvas.height - pad * 2);
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
@@ -1014,7 +1066,7 @@ function drawChart(rows) {
 
   rows.forEach((row, index) => {
     const x = pad + ((canvas.width - pad * 2) / (rows.length - 1)) * index;
-    const y = canvas.height - pad - ((row.price - min) / spread) * (canvas.height - pad * 2);
+    const y = canvas.height - pad - ((unitPriceValue(row) - min) / spread) * (canvas.height - pad * 2);
     ctx.fillStyle = "#d64f2f";
     ctx.beginPath();
     ctx.arc(x, y, 5, 0, Math.PI * 2);
@@ -1036,7 +1088,7 @@ function renderEntriesTable() {
     row.innerHTML = `
       <td data-label="Дата">${formatDate(entry.createdAt)}</td>
       <td data-label="Товар">${escapeHtml(entry.product)}</td>
-      <td data-label="Цена">${formatMoney(entry.price, entry.currency)} / ${escapeHtml(entry.unit)}<br><span class="meta">× ${formatQuantity(entry.quantity || 1)} = ${formatMoney(Number(entry.price) * Number(entry.quantity || 1), entry.currency)}</span></td>
+      <td data-label="Итого / за единицу">${formatMoney(entry.price, entry.currency)}<br><span class="meta">${formatQuantity(entry.quantity || 1)} ${escapeHtml(entry.unit || "шт")} · ${formatUnitPrice(entry)}</span></td>
       <td data-label="Магазин">${escapeHtml(entry.store)}<br><span class="meta">${escapeHtml(entry.coordinates || coordinatesString(entry) || entry.location || "")}</span></td>
       <td data-label="Категория">${escapeHtml(entry.category)}</td>
       <td data-label="Действия">
@@ -1072,11 +1124,11 @@ function renderChecklist() {
           <span class="checklist-status">${status.label}</span>
         </div>
         <span>${escapeHtml(formatPlannedQuantity(item))}</span>
-        <span>${latest ? `Последняя: ${formatMoney(latest.price, latest.currency)} · ${formatDate(latest.createdAt)}` : "Еще нет истории"}</span>
-        ${cheapest && (!latest || cheapest.id !== latest.id) ? `<span>Дешевле всего: ${formatMoney(cheapest.price, cheapest.currency)} · ${escapeHtml(cheapest.store)}</span>` : ""}
+        <span>${latest ? `Последняя: ${formatUnitPrice(latest)} · ${formatDate(latest.createdAt)}` : "Еще нет истории"}</span>
+        ${cheapest && (!latest || cheapest.id !== latest.id) ? `<span>Дешевле всего: ${formatUnitPrice(cheapest)} · ${escapeHtml(cheapest.store)}</span>` : ""}
       </div>
       <div class="table-actions">
-        <button class="table-action" type="button" data-check-item="${escapeHtml(item.id)}">${item.status === "priced" ? "Еще цена" : "Внести цену"}</button>
+        <button class="table-action" type="button" data-check-item="${escapeHtml(item.id)}">${item.status === "priced" ? "Еще итог" : "Внести итог"}</button>
         <button class="table-action" type="button" data-missing-check="${escapeHtml(item.id)}">${item.status === "missing" ? "Вернуть" : "Нет в наличии"}</button>
         <button class="table-action danger" type="button" data-remove-check="${escapeHtml(item.id)}">Убрать</button>
       </div>
@@ -1176,7 +1228,7 @@ function renderChecklistStats() {
   const priced = items.filter((item) => item.status === "priced").length;
   const missing = items.filter((item) => item.status === "missing").length;
   els.checklistStats.textContent = items.length
-    ? `${pending} проверить · ${priced} с ценой · ${missing} нет в наличии`
+    ? `${pending} проверить · ${priced} с итогом · ${missing} нет в наличии`
     : "Список пуст";
   els.clearDoneChecklistButton.disabled = !priced && !missing;
 }
@@ -1219,7 +1271,7 @@ function cheapestEntryForProduct(product) {
   const normalized = normalizeProduct(product);
   return state.entries
     .filter((entry) => entry.normalizedProduct === normalized)
-    .sort((a, b) => Number(a.price) - Number(b.price))[0] || null;
+    .sort((a, b) => unitPriceValue(a) - unitPriceValue(b))[0] || null;
 }
 
 function renderSheetStatus() {
@@ -1310,7 +1362,7 @@ function handleSaveEntryEdit(event) {
   updated.sheetName = sheetNameFor(updated);
 
   if (!updated.product || !updated.store || !Number.isFinite(updated.price) || !Number.isFinite(updated.quantity) || updated.quantity <= 0) {
-    showToast("Проверьте товар, магазин, цену и количество.");
+    showToast("Проверьте товар, магазин, итоговую цену и количество.");
     return;
   }
 
@@ -2339,6 +2391,16 @@ function formatMoney(value, currency) {
   }).format(value);
 }
 
+function unitPriceValue(entry) {
+  const quantity = Number(entry?.quantity || 1);
+  const price = Number(entry?.price || 0);
+  return quantity > 0 ? price / quantity : price;
+}
+
+function formatUnitPrice(entry) {
+  return `${formatMoney(unitPriceValue(entry), entry.currency)} / ${entry.unit || "шт"}`;
+}
+
 function formatQuantity(value) {
   return new Intl.NumberFormat("ru-RU", {
     maximumFractionDigits: 3
@@ -2415,7 +2477,7 @@ function formatPlannedQuantity(item) {
 }
 
 function checklistStatus(item) {
-  if (item.status === "priced") return { label: "цена внесена", className: "is-priced" };
+  if (item.status === "priced") return { label: "итог внесен", className: "is-priced" };
   if (item.status === "missing") return { label: "нет в наличии", className: "is-missing" };
   return { label: "надо проверить", className: "is-pending" };
 }
