@@ -1418,7 +1418,8 @@ function handleAddStorePoint(event) {
     name: cleanText(els.storePointNameInput.value),
     location: cleanText(els.storePointLocationInput.value),
     latitude: cleanText(els.storePointLatInput.value),
-    longitude: cleanText(els.storePointLonInput.value)
+    longitude: cleanText(els.storePointLonInput.value),
+    pendingSync: true
   };
   if (!store.name) {
     showToast("Введите название магазина.");
@@ -1430,7 +1431,7 @@ function handleAddStorePoint(event) {
   store.sheetName = sheetNameFor(store);
   const existingIndex = state.stores.findIndex((item) => (item.storeKey || storeKeyFor(item)) === store.storeKey);
   if (existingIndex >= 0) {
-    state.stores[existingIndex] = { ...state.stores[existingIndex], ...store };
+    state.stores[existingIndex] = { ...state.stores[existingIndex], ...store, pendingSync: true };
   } else {
     state.stores.push(store);
   }
@@ -1782,8 +1783,10 @@ async function syncWithBackend(options = {}) {
     const { importedCount, removedCount } = mergeRemoteEntries(remote.entries || []);
     const pending = state.entries.filter((entry) => !entry.syncedAt);
 
-    for (const store of state.stores) {
+    for (const store of state.stores.filter(shouldUploadStore)) {
       await backendRequest("upsertStore", { store });
+      store.syncedAt = store.syncedAt || new Date().toISOString();
+      store.pendingSync = false;
     }
 
     const syncedAt = new Date().toISOString();
@@ -1851,19 +1854,38 @@ async function readStoresFromSheets(existingSheets) {
 
 function mergeRemoteStores(remoteStores) {
   let importedCount = 0;
+  const remoteByKey = new Map();
+  remoteStores.forEach((remoteStore) => {
+    const key = remoteStore.storeKey || storeKeyFor(remoteStore);
+    remoteByKey.set(key, { ...remoteStore, storeKey: key, syncedAt: new Date().toISOString(), pendingSync: false });
+  });
+
+  const keepLocal = state.stores.filter((store) => {
+    const key = store.storeKey || storeKeyFor(store);
+    return !remoteByKey.has(key) && shouldKeepLocalStore(store);
+  });
+
   const localByKey = new Map(state.stores.map((store) => [store.storeKey || storeKeyFor(store), store]));
   remoteStores.forEach((remoteStore) => {
     const key = remoteStore.storeKey || storeKeyFor(remoteStore);
     const localStore = localByKey.get(key);
-    if (localStore) {
-      Object.assign(localStore, { ...remoteStore, storeKey: key });
-      return;
-    }
-    state.stores.push({ ...remoteStore, storeKey: key });
-    localByKey.set(key, remoteStore);
-    importedCount += 1;
+    if (!localStore) importedCount += 1;
   });
+  state.stores = [...remoteByKey.values(), ...keepLocal];
   return importedCount;
+}
+
+function shouldKeepLocalStore(store) {
+  return shouldUploadStore(store) || storeUsedByUnsyncedEntry(store);
+}
+
+function shouldUploadStore(store) {
+  return Boolean(store.pendingSync) || storeUsedByUnsyncedEntry(store);
+}
+
+function storeUsedByUnsyncedEntry(store) {
+  const key = store.storeKey || storeKeyFor(store);
+  return state.entries.some((entry) => !entry.syncedAt && (entry.storeKey || storeKeyFor(entry)) === key);
 }
 
 async function writeStoreIndex() {
@@ -1885,6 +1907,11 @@ async function writeStoreIndex() {
       body: JSON.stringify({ values: [STORE_HEADERS, ...stores.map(storeToRow)] })
     }
   );
+  const syncedAt = new Date().toISOString();
+  state.stores.forEach((store) => {
+    store.syncedAt = store.syncedAt || syncedAt;
+    store.pendingSync = false;
+  });
 }
 
 async function writeStoreHeaders() {
@@ -1924,7 +1951,6 @@ function mergeRemoteEntries(remoteEntries) {
       return keep;
     })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  state.entries.forEach(rememberStore);
   return { importedCount, removedCount };
 }
 
@@ -2262,6 +2288,7 @@ function rememberStore(entry) {
     existing.longitude = entry.longitude || existing.longitude;
     existing.coordinates = entry.coordinates || existing.coordinates || coordinatesString(entry);
     existing.country = entry.country || existing.country || countryFromCoordinates(entry);
+    if (!entry.syncedAt) existing.pendingSync = true;
   } else {
     state.stores.push({
       name: entry.store,
@@ -2271,7 +2298,9 @@ function rememberStore(entry) {
       latitude: entry.latitude,
       longitude: entry.longitude,
       coordinates: entry.coordinates || coordinatesString(entry),
-      country: entry.country || countryFromCoordinates(entry)
+      country: entry.country || countryFromCoordinates(entry),
+      syncedAt: entry.syncedAt ? new Date().toISOString() : "",
+      pendingSync: !entry.syncedAt
     });
   }
 }
